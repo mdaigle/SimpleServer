@@ -20,7 +20,7 @@ type p0pmessage struct  {
 	data [256]byte
 }
 
-func encode(message p0pmessage) ([]byte) {
+func Encode(message p0pmessage) ([]byte) {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.BigEndian, &message)
 	if err != nil {
@@ -29,7 +29,7 @@ func encode(message p0pmessage) ([]byte) {
 	return buf
 }
 
-func decode(buf []byte) (p0pmessage) {
+func Decode(buf []byte) (p0pmessage) {
 	message := p0pmessage{}
 	err := binary.Read(buf, binary.LittleEndian, &message)
 	if err != nil {
