@@ -24,6 +24,14 @@ func main() {
 	go readIn(end)
 
 	for {
+		//Check if we should quit
+		select{
+		case _,ok := <- quit:
+			if !ok {
+				break;
+			}
+		}
+
 		conn, err := net.ListenUDP("udp", udpAddr)
 		if err == nil {
 			wg.Add(1)
@@ -40,22 +48,14 @@ func main() {
 	wg.Wait()
 }
 
-// Closes quit when correct input is detected. Closes quit if notified to do so through end channel
-// (for reporting of errors by other routines).
-func broadcastQuit(quit *chan bool, end *chan bool) {
-	for {
-		select {
-		case endserver := <-end:
-			if endserver {
-				close(quit)
-				break
-			}
-		}
-	}
+// Closes quit when a shutdown command is received through the end channel.
+func broadcastQuit(quit chan<- bool, end <-chan bool) {
+	<-end
+	close(quit)
 }
 
-// Waits for input on stdin. Sends end message if 'q' or EOF detected.
-func readIn(end *chan bool) {
+// Waits for input on stdin. Sends shutdown command if 'q' or EOF detected.
+func readIn(end chan<- bool) {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
@@ -74,13 +74,13 @@ func readIn(end *chan bool) {
 	}
 }
 
-func handleClient(conn *net.UDPConn, quit *chan bool, end *chan bool) {
+func handleClient(conn *net.UDPConn, quit <-chan bool, end chan<- bool) {
 	fmt.Println("Session created")
 
 	conn.SetReadDeadline(time.Now().Add(20 * time.Second))
 
 	for {
-		// use select to see if we get a notification that we are quitting
+		//read on a separate routine and notify through channel to prevent blocking here?
 		var buf [512]byte
 		_, addr, err := conn.ReadFromUDP(buf[0:])
 
@@ -93,6 +93,8 @@ func handleClient(conn *net.UDPConn, quit *chan bool, end *chan bool) {
 		}
 
 		message := protocol.Decode(buf)
+		//TODO: transmit message contents back to client
+
 
 		select {
 		case _,ok := <- quit:
@@ -100,10 +102,10 @@ func handleClient(conn *net.UDPConn, quit *chan bool, end *chan bool) {
 				break;
 			}
 		}
-		// logic for state transitions
+		//TODO: logic for state transitions
 	}
 
-	//send goodbye message
+	//TODO: send goodbye message
 	err := conn.Close()
 	if err != nil {
 		end <- true
