@@ -6,21 +6,28 @@ import(
 	"fmt"
 )
 
-type p0pmessage struct  {
+const HELLO = 0
+const DATA = 1
+const ALIVE = 2
+const GOODBYE = 3
+const MAGIC = 0xC461
+const VERSION = 1
+
+type P0Pmessage struct  {
 	// Should always be 0xC461
-	magic int16
+	Magic uint16
 	// Should always be 1
-	version int8
+	Version uint8
 	// 0 is HELLO, 1 is DATA, 2 is ALIVE, and 3 is GOODBYE
-	command int8
+	Command uint8
 	// specifies place in packet sequence
-	sequencenumber int32
+	Sequencenumber uint32
 	// Unique identifier for each client with an open connection
-	sessionid int32
-	data [256]byte
+	Sessionid uint32
+	Data [256]byte
 }
 
-func Encode(message p0pmessage) ([]byte) {
+func Encode(message P0Pmessage) (*bytes.Buffer) {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.BigEndian, &message)
 	if err != nil {
@@ -29,11 +36,11 @@ func Encode(message p0pmessage) ([]byte) {
 	return buf
 }
 
-func Decode(buf []byte) (p0pmessage) {
-	message := p0pmessage{}
-	err := binary.Read(buf, binary.LittleEndian, &message)
+func Decode(buf []byte) (P0Pmessage) {
+	message := P0Pmessage{}
+	err := binary.Read(bytes.NewReader(buf), binary.BigEndian, &message)
 	if err != nil {
-		fmt.Println("Decoding of message failed.")
+		//fmt.Println("Decoding of message failed.")
 	}
 	return message
 }
