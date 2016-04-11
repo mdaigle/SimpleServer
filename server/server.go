@@ -16,6 +16,10 @@ import(
 var chanmap = make(map[uint32](chan protocol.P0Pmessage))
 var chanmaplock sync.Mutex
 
+// Global counter for number of responses sent
+var server_seq_num uint32 = 0
+var server_seq_num_lock sync.Mutex
+
 // A wait group incremented for each client thread opened.
 // Decremented when client threads die.
 var sessionWaitGroup sync.WaitGroup
@@ -50,15 +54,14 @@ func main() {
 
 		}
 
-		fmt.Println("About to read from udp")
+		//fmt.Println("About to read from udp")
 		buf := make([]byte, 512)
 		conn.SetReadDeadline(time.Now().Add(5 * time.Millisecond))
 		_, addr, err := conn.ReadFromUDP(buf[0:])
 
-
 		if err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
-				fmt.Println("Read timed out")
+				//fmt.Println("Read timed out")
 				continue
 			}
 			fmt.Println("Encountered an error while listening for connections")
@@ -71,7 +74,7 @@ func main() {
 		sessionWaitGroup.Add(1)
 		go func() {
 			defer sessionWaitGroup.Done()
-			processPacket(conn, buf)
+			processPacket(conn, addr, buf)
 		}()
 	}
 	sessionWaitGroup.Wait()
@@ -87,7 +90,7 @@ func broadcastQuit() {
 
 // Waits for input on stdin. Sends shutdown command if 'q' or EOF detected.
 func readIn() {
-	fmt.Println("In input routine.")
+	//fmt.Println("In input routine.")
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
@@ -108,23 +111,30 @@ func readIn() {
 	}
 }
 
-func processPacket(conn *net.UDPConn, buf []byte) {
+func processPacket(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) {
 	message := protocol.Decode(buf)
 
-	//See if we already have a session with this id open.
+	// If the magic value is corrupt, silently discard the message
+	if message.Magic != protocol.MAGIC {
+		return
+	}
+
+	// See if we already have a session with this id open.
 	sesschan, ok := chanMapGet(message.Sessionid)
 	if !ok {
 		//make sure the message is HELLO
 		if (message.Command == protocol.HELLO) {
+			//TODO: try an unbuffered channel and let this routine block until the session routine is ready
+			// will that cause ordering issues?
 			sesschan = make(chan protocol.P0Pmessage, 10)
 			chanmap[message.Sessionid] = sesschan
 			sessionWaitGroup.Add(1)
 			go func() {
 				defer sessionWaitGroup.Done()
-				handleClient(conn)
+				handleClient(conn, addr, sesschan, message)
 			}()
 		} else {
-			//Something is broken here or with the client, quit.
+			// Something is broken here or with the client, quit.
 			end <- true
 		}
 	}
@@ -132,13 +142,34 @@ func processPacket(conn *net.UDPConn, buf []byte) {
 	sesschan<-message;
 }
 
-func handleClient(conn *net.UDPConn) {
+func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P0Pmessage, initMessage protocol.P0Pmessage) {
 	fmt.Println("Session created")
 
-	/*sessionstate := 0
-	var seqnum uint32
-	seqnum = 0;
-	var sessionid uint32*/
+	//var sessionstate uint8 = 0
+
+	var client_seq_num uint32 = 0
+	if initMessage.Sequencenumber != client_seq_num {
+		fmt.Println("ERROR: Non-zero initial sequence number:", initMessage.Sequencenumber)
+		//definitely close session
+	}
+
+	var sessionid uint32 = initMessage.Sessionid
+
+	//Respond with a HELLO message
+	var response protocol.P0Pmessage
+	response.Magic = protocol.MAGIC
+	response.Version = protocol.VERSION
+	response.Command = protocol.HELLO
+	response.Sequencenumber = getServerSeqNum()
+	response.Sessionid = sessionid
+
+	buf := protocol.Encode(response)
+
+	num_written, err := conn.WriteToUDP(buf, addr)
+	if (num_written == 0 || err != nil) {
+		fmt.Println("ERROR: Write failed")
+		//close session?
+	}
 
 	for {
 		select {
@@ -146,6 +177,7 @@ func handleClient(conn *net.UDPConn) {
 			if !ok {
 				break;
 			}
+
 		}
 
 		/*//If the magic field does not match, silently discard the packet
@@ -186,14 +218,14 @@ func handleClient(conn *net.UDPConn) {
 	//TODO: send goodbye message
 }
 
-func chanMapGet(sessionId uint32) (chan protocol.P0Pmessage, ok bool){
+func chanMapGet(sessionId uint32) (chan protocol.P0Pmessage, bool){
 	chanmaplock.Lock()
 	defer chanmaplock.Unlock()
 	sesschan, ok := chanmap[sessionId]
 	if !ok {
 		return nil, false
 	} else {
-		return sesschan
+		return sesschan, true
 	}
 }
 
@@ -201,4 +233,12 @@ func chanMapDelete(sessionId uint32) {
 	chanmaplock.Lock()
 	delete(chanmap, sessionId)
 	chanmaplock.Unlock()
+}
+
+func getServerSeqNum() (uint32) {
+	server_seq_num_lock.Lock()
+	defer server_seq_num_lock.Unlock()
+	num := server_seq_num
+	server_seq_num += 1
+	return num
 }
