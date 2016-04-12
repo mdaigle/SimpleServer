@@ -114,8 +114,15 @@ func readIn() {
 func processPacket(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) {
 	message := protocol.Decode(buf)
 
+	//TODO: maybe move validation to separate function
+
 	// If the magic value is corrupt, silently discard the message
 	if message.Magic != protocol.MAGIC {
+		return
+	}
+
+	// If the message is using an incorrect version of the protocol, discard it
+	if message.Version != protocol.VERSION {
 		return
 	}
 
@@ -145,10 +152,8 @@ func processPacket(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) {
 func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P0Pmessage, initMessage protocol.P0Pmessage) {
 	fmt.Println("Session created")
 
-	//var sessionstate uint8 = 0
-
-	var client_seq_num uint32 = 0
-	if initMessage.Sequencenumber != client_seq_num {
+	var client_seq_num int32 = -1
+	if initMessage.Sequencenumber - 1 != client_seq_num {
 		fmt.Println("ERROR: Non-zero initial sequence number:", initMessage.Sequencenumber)
 		//definitely close session
 	}
@@ -156,63 +161,77 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 	var sessionid uint32 = initMessage.Sessionid
 
 	//Respond with a HELLO message
-	var response protocol.P0Pmessage
-	response.Magic = protocol.MAGIC
-	response.Version = protocol.VERSION
-	response.Command = protocol.HELLO
-	response.Sequencenumber = getServerSeqNum()
-	response.Sessionid = sessionid
+	var hello_response protocol.P0Pmessage
+	hello_response.Magic = protocol.MAGIC
+	hello_response.Version = protocol.VERSION
+	hello_response.Command = protocol.HELLO
+	hello_response.Sequencenumber = getServerSeqNum()
+	hello_response.Sessionid = sessionid
 
-	buf := protocol.Encode(response)
+	hello_buf := protocol.Encode(hello_response)
 
-	num_written, err := conn.WriteToUDP(buf, addr)
+	num_written, err := conn.WriteToUDP(hello_buf, addr)
 	if (num_written == 0 || err != nil) {
 		fmt.Println("ERROR: Write failed")
 		//close session?
 	}
 
+	//TODO: set and check on timer
+
 	for {
 		select {
-		case _,ok := <- quit:
+		case _, ok := <-quit:
 			if !ok {
 				break;
 			}
-
-		}
-
-		/*//If the magic field does not match, silently discard the packet
-		if (message.Magic != protocol.MAGIC) {
-			continue
-		}
-
-		//Check that version number is correct
-		if (message.Version != protocol.VERSION) {
-			continue
-		}
-
-		//Check if we lost packets
-		if (message.Sequencenumber != seqnum) {
-			//Lost message.Sequencenumber - seqnum packets.
-		}
-
-		seqnum = message.Sequencenumber
-
-		//TODO: set session id if first message
-		if (message.Sessionid != sessionid){
-			//TODO: do something
-		}
-
-		if (sessionstate == protocol.HELLO) { //Ready to say hello.
-			if (message.Command == protocol.HELLO) {
-				//Correct, send hello message back
-			} else {
-				//Error
+		case message, ok := <- sesschan:
+			//Check for packet ordering issues
+			if (message.Sequencenumber < client_seq_num) {
+				//Protocol error, end session
+				break
 			}
-		} else if sessionstate == protocol.ALIVE { //Ready to receive
+			if (message.Sequencenumber == client_seq_num) {
+				//Duplicate message, discard
+				continue
+			}
+			if (message.Sequencenumber > client_seq_num + 1) {
+				//We lost packets
+				for i := client_seq_num + 1; i < message.Sequencenumber; i++ {
+					fmt.Println("Error: Lost packet", i)
+				}
+			}
+			client_seq_num = message.Sequencenumber
 
-		} else { //Session state is GOODBYE and session should have already ended
-			//TODO: throw error
-		}*/
+			if (message.Command != protocol.DATA) {
+				// incorrect command or goodbye message,
+				// either way, close connection
+				break
+			}
+
+			// Print data to standard out
+			fmt.Println(string(message.Data[:]))
+
+			//Respond with an ALIVE message
+			var response protocol.P0Pmessage
+			response.Magic = protocol.MAGIC
+			response.Version = protocol.VERSION
+			response.Command = protocol.HELLO
+			response.Sequencenumber = getServerSeqNum()
+			response.Sessionid = sessionid
+
+			buf := protocol.Encode(response)
+
+			num_written, err := conn.WriteToUDP(buf, addr)
+			if (num_written == 0 || err != nil) {
+				fmt.Println("ERROR: Write failed")
+				//close session?
+			}
+			//TODO: reset timer
+		default:
+			//Include default case so that we are non-blocking and can check up on the timer
+		}
+
+		//TODO: if timer is up, break so that we can say goodbye
 	}
 
 	//TODO: send goodbye message
