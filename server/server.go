@@ -6,7 +6,6 @@ import(
 	"net"
 	"os"
 	"time"
-	//"sync"
 	"bufio"
 	"io"
 	"sync"
@@ -140,6 +139,7 @@ func processPacket(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) {
 				defer sessionWaitGroup.Done()
 				handleClient(conn, addr, sesschan, message)
 			}()
+			return
 		} else {
 			// Something is broken here or with the client, quit.
 			end <- true
@@ -152,8 +152,8 @@ func processPacket(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) {
 func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P0Pmessage, initMessage protocol.P0Pmessage) {
 	fmt.Println("Session created")
 
-	var client_seq_num int32 = -1
-	if initMessage.Sequencenumber - 1 != client_seq_num {
+	var client_seq_num uint32 = 0;
+	if initMessage.Sequencenumber != client_seq_num {
 		fmt.Println("ERROR: Non-zero initial sequence number:", initMessage.Sequencenumber)
 		//definitely close session
 	}
@@ -173,8 +173,10 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 	num_written, err := conn.WriteToUDP(hello_buf, addr)
 	if (num_written == 0 || err != nil) {
 		fmt.Println("ERROR: Write failed")
-		//close session?
+		//TODO: close session?
 	}
+
+	//works to here.
 
 	//TODO: set and check on timer
 
@@ -184,13 +186,15 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 			if !ok {
 				break;
 			}
-		case message, ok := <- sesschan:
+		case message, _ := <- sesschan:
 			//Check for packet ordering issues
+
+
 			if (message.Sequencenumber < client_seq_num) {
 				//Protocol error, end session
 				break
 			}
-			if (message.Sequencenumber == client_seq_num) {
+			if (client_seq_num != 0 && message.Sequencenumber == client_seq_num) {
 				//Duplicate message, discard
 				continue
 			}
@@ -200,7 +204,7 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 					fmt.Println("Error: Lost packet", i)
 				}
 			}
-			client_seq_num = message.Sequencenumber
+			client_seq_num = message.Sequencenumber;
 
 			if (message.Command != protocol.DATA) {
 				// incorrect command or goodbye message,
