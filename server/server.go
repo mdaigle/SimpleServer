@@ -68,7 +68,6 @@ func main() {
 			end <- true
 			break
 		}
-		fmt.Println("New message from ", addr.String())
 
 		sessionWaitGroup.Add(1)
 		go func() {
@@ -201,7 +200,7 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 			if (message.Sequencenumber > client_seq_num + 1) {
 				//We lost packets
 				for i := client_seq_num + 1; i < message.Sequencenumber; i++ {
-					fmt.Println("Error: Lost packet", i)
+					fmt.Printf("%v [%v] Lost packet\n", sessionid, i);
 				}
 			}
 			client_seq_num = message.Sequencenumber;
@@ -213,13 +212,13 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 			}
 
 			// Print data to standard out
-			fmt.Println(string(message.Data[:]))
+			fmt.Printf("%v [%v] " + string(message.Data[:]) + "\n", sessionid, message.Sequencenumber)
 
 			//Respond with an ALIVE message
 			var response protocol.P0Pmessage
 			response.Magic = protocol.MAGIC
 			response.Version = protocol.VERSION
-			response.Command = protocol.HELLO
+			response.Command = protocol.ALIVE
 			response.Sequencenumber = getServerSeqNum()
 			response.Sessionid = sessionid
 
