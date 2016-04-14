@@ -27,6 +27,8 @@ var sessionWaitGroup sync.WaitGroup
 var quit = make(chan bool)
 // A write to this channel signals that the server should shut down
 var end = make(chan bool)
+// A write to this channel signals that the timer should be reset
+var resetTimer = make(chan bool)
 
 func main() {
 	portnum := os.Args[1];
@@ -37,20 +39,24 @@ func main() {
 
 	go broadcastQuit()
 	go readIn()
+	go timerComm()
 
 	fmt.Printf("Waiting on port %v...\n", portnum)
 	conn, err := net.ListenUDP("udp", udpaddr)
 
 	for {
 		//Check if we should quit
+		cont := true
 		select{
 		case _,ok := <-quit:
 			if !ok {
-				break;
+				cont = false
 			}
 		default:
 
 		}
+
+		if (!cont) {break}
 
 		//fmt.Println("About to read from udp")
 		buf := make([]byte, 512)
@@ -62,7 +68,6 @@ func main() {
 				//fmt.Println("Read timed out")
 				continue
 			}
-			fmt.Println("Encountered an error while listening for connections")
 			fmt.Println(err.Error())
 			end <- true
 			break
@@ -81,7 +86,6 @@ func main() {
 // Closes quit when a shutdown command is received through the end channel.
 func broadcastQuit() {
 	<-end
-	fmt.Println("End request received")
 	close(quit)
 }
 
@@ -92,18 +96,33 @@ func readIn() {
 
 	for {
 		text, err := reader.ReadString('\n')
-		fmt.Println(text)
 
-		if text == "q" {
+		if text == "q\n" {
 			//post to channel or global
-			fmt.Println("Server shutting down.")
-			end <- true;
-			break;
+			end <- true
+			return
 		}
 
 		if err == io.EOF {
-			end <- true;
-			break;
+			end <- true
+			return
+		}
+	}
+}
+
+func timerComm() {
+	timer := time.NewTimer(20 * time.Second)
+	for {
+		select {
+		case <- timer.C:
+			//timer expired, close server
+			end <- true
+			return
+		case <- resetTimer:
+			//reset timer
+			timer.Reset(20 * time.Second)
+		default:
+
 		}
 	}
 }
@@ -140,7 +159,7 @@ func processPacket(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) {
 		}
 	}
 
-	sesschan<-message;
+	sesschan<-message
 }
 
 func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P0Pmessage, initMessage protocol.P0Pmessage) {
@@ -168,14 +187,18 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 		fmt.Println("ERROR: Write failed")
 	}
 
-	//TODO: set and check on timer
+	sessTimer := time.NewTimer(5 * time.Second)
 
-	cont := true
-	for cont {
+	for {
+		cont := true
 		select {
+		case <- sessTimer.C:
+			cont = false
+			break
 		case _, ok := <-quit:
 			if !ok {
-				break;
+				cont = false
+				break
 			}
 		case message, _ := <- sesschan:
 			//Check for packet ordering issues
@@ -187,16 +210,16 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 				break
 			}
 			if (client_seq_num != 0 && message.Sequencenumber == client_seq_num) {
-				fmt.Printf("%v [%v] Duplicate packet\n", sessionid, message.Sequencenumber);
+				fmt.Printf("%v [%v] Duplicate packet\n", sessionid, message.Sequencenumber)
 				break
 			}
 			if (message.Sequencenumber > client_seq_num + 1) {
 				//We lost packets
 				for i := client_seq_num + 1; i < message.Sequencenumber; i++ {
-					fmt.Printf("%v [%v] Lost packet\n", sessionid, i);
+					fmt.Printf("%v [%v] Lost packet\n", sessionid, i)
 				}
 			}
-			client_seq_num = message.Sequencenumber;
+			client_seq_num = message.Sequencenumber
 
 			if (message.Command == protocol.GOODBYE) {
 				fmt.Printf("%v [%v] GOODBYE from client.\n", sessionid, message.Sequencenumber);
@@ -228,12 +251,12 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 				fmt.Println("ERROR: Write failed")
 				//close session?
 			}
-			//TODO: reset timer
+			resetTimer <- true;
+			sessTimer.Reset(5 * time.Second)
 		default:
 			//Include default case so that we are non-blocking and can check up on the timer
 		}
-
-		//TODO: if timer is up, break so that we can say goodbye
+		if (!cont) {break}
 	}
 
 	var response protocol.P0Pmessage
@@ -249,6 +272,9 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 	if (num_written == 0 || err != nil) {
 		fmt.Println("ERROR: Write failed")
 	}
+
+	chanMapDelete(sessionid)
+	close(sesschan)
 }
 
 func chanMapGet(sessionId uint32) (chan protocol.P0Pmessage, bool){
