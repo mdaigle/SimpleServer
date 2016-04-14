@@ -31,7 +31,6 @@ var end = make(chan bool)
 func main() {
 	portnum := os.Args[1];
 	udpaddr, err := net.ResolveUDPAddr("udp", "localhost:"+portnum)
-	fmt.Println(udpaddr.String())
 	if err != nil {
 		fmt.Println("error resolving address")
 	}
@@ -39,7 +38,7 @@ func main() {
 	go broadcastQuit()
 	go readIn()
 
-	fmt.Println("listening for connections on port ", portnum)
+	fmt.Printf("Waiting on port %v...\n", portnum)
 	conn, err := net.ListenUDP("udp", udpaddr)
 
 	for {
@@ -133,11 +132,7 @@ func processPacket(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) {
 			// will that cause ordering issues?
 			sesschan = make(chan protocol.P0Pmessage, 10)
 			chanmap[message.Sessionid] = sesschan
-			sessionWaitGroup.Add(1)
-			go func() {
-				defer sessionWaitGroup.Done()
-				handleClient(conn, addr, sesschan, message)
-			}()
+			go handleClient(conn, addr, sesschan, message)
 			return
 		} else {
 			// Something is broken here or with the client, quit.
@@ -149,8 +144,6 @@ func processPacket(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) {
 }
 
 func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P0Pmessage, initMessage protocol.P0Pmessage) {
-	fmt.Println("Session created")
-
 	var client_seq_num uint32 = 0;
 	if initMessage.Sequencenumber != client_seq_num {
 		fmt.Println("ERROR: Non-zero initial sequence number:", initMessage.Sequencenumber)
@@ -158,6 +151,7 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 	}
 
 	var sessionid uint32 = initMessage.Sessionid
+	fmt.Printf("%v [%v] Session created\n", sessionid, initMessage.Sequencenumber)
 
 	//Respond with a HELLO message
 	var hello_response protocol.P0Pmessage
@@ -172,14 +166,12 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 	num_written, err := conn.WriteToUDP(hello_buf, addr)
 	if (num_written == 0 || err != nil) {
 		fmt.Println("ERROR: Write failed")
-		//TODO: close session?
 	}
-
-	//works to here.
 
 	//TODO: set and check on timer
 
-	for {
+	cont := true
+	for cont {
 		select {
 		case _, ok := <-quit:
 			if !ok {
@@ -191,11 +183,12 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 
 			if (message.Sequencenumber < client_seq_num) {
 				//Protocol error, end session
+				cont = false
 				break
 			}
 			if (client_seq_num != 0 && message.Sequencenumber == client_seq_num) {
-				//Duplicate message, discard
-				continue
+				fmt.Printf("%v [%v] Duplicate packet\n", sessionid, message.Sequencenumber);
+				break
 			}
 			if (message.Sequencenumber > client_seq_num + 1) {
 				//We lost packets
@@ -205,9 +198,15 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 			}
 			client_seq_num = message.Sequencenumber;
 
+			if (message.Command == protocol.GOODBYE) {
+				fmt.Printf("%v [%v] GOODBYE from client.\n", sessionid, message.Sequencenumber);
+				cont = false
+				break
+			}
+
 			if (message.Command != protocol.DATA) {
-				// incorrect command or goodbye message,
-				// either way, close connection
+				// incorrect command
+				cont = false
 				break
 			}
 
@@ -237,7 +236,19 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 		//TODO: if timer is up, break so that we can say goodbye
 	}
 
-	//TODO: send goodbye message
+	var response protocol.P0Pmessage
+	response.Magic = protocol.MAGIC
+	response.Version = protocol.VERSION
+	response.Command = protocol.GOODBYE
+	response.Sequencenumber = getServerSeqNum()
+	response.Sessionid = sessionid
+
+	buf := protocol.Encode(response)
+
+	num_written, err = conn.WriteToUDP(buf, addr)
+	if (num_written == 0 || err != nil) {
+		fmt.Println("ERROR: Write failed")
+	}
 }
 
 func chanMapGet(sessionId uint32) (chan protocol.P0Pmessage, bool){
