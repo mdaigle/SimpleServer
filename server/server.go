@@ -73,13 +73,7 @@ func main() {
 			break
 		}
 
-		fmt.Println("Received Packet")
-
-		sessionWaitGroup.Add(1)
-		go func() {
-			defer sessionWaitGroup.Done()
-			processPacket(conn, addr, buf)
-		}()
+		processPacket(conn, addr, buf)
 	}
 	sessionWaitGroup.Wait()
 	conn.Close()
@@ -207,7 +201,6 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 
 
 			if (message.Sequencenumber < client_seq_num) {
-				//Protocol error, end session
 				cont = false
 				break
 			}
