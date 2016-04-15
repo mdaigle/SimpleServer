@@ -73,6 +73,8 @@ func main() {
 			break
 		}
 
+		fmt.Println("Received Packet")
+
 		sessionWaitGroup.Add(1)
 		go func() {
 			defer sessionWaitGroup.Done()
