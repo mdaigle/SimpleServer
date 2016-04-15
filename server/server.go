@@ -44,7 +44,7 @@ func main() {
 	go timerComm()
 
 	fmt.Printf("Waiting on port %v...\n", portnum)
-	conn, err := net.ListenUDP("udp", udpaddr)
+	conn, err := net.ListenUDP("udp4", udpaddr)
 
 	for {
 		//Check if we should quit
