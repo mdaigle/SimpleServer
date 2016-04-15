@@ -32,11 +32,11 @@ var resetTimer = make(chan bool)
 
 func main() {
 	portnum := os.Args[1];
-	udpaddr, err := net.ResolveUDPAddr("udp", "localhost:"+portnum)
+	udpaddr, err := net.ResolveUDPAddr("udp", "0.0.0.0:"+portnum)
 	if err != nil {
 		fmt.Println("error resolving address")
 	}
-
+	
 	go broadcastQuit()
 	go readIn()
 	go timerComm()
