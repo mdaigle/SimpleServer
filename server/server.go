@@ -37,8 +37,6 @@ func main() {
 		fmt.Println("error resolving address")
 	}
 
-	//fmt.Println(udpaddr.IP.String() + ":", udpaddr.Port)
-
 	go broadcastQuit()
 	go readIn()
 	go timerComm()
