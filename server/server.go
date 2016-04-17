@@ -27,8 +27,6 @@ var sessionWaitGroup sync.WaitGroup
 var quit = make(chan bool)
 // A write to this channel signals that the server should shut down
 var end = make(chan bool)
-// A write to this channel signals that the timer should be reset
-var resetTimer = make(chan bool)
 
 func main() {
 	portnum := os.Args[1];
@@ -39,7 +37,6 @@ func main() {
 
 	go broadcastQuit()
 	go readIn()
-	go timerComm()
 
 	fmt.Printf("Waiting on port %v...\n", portnum)
 	conn, err := net.ListenUDP("udp4", udpaddr)
@@ -102,23 +99,6 @@ func readIn() {
 		if err == io.EOF {
 			end <- true
 			return
-		}
-	}
-}
-
-func timerComm() {
-	timer := time.NewTimer(20 * time.Second)
-	for {
-		select {
-		case <- timer.C:
-			//timer expired, close server
-			end <- true
-			return
-		case <- resetTimer:
-			//reset timer
-			timer.Reset(20 * time.Second)
-		default:
-
 		}
 	}
 }
@@ -246,7 +226,6 @@ func handleClient(conn *net.UDPConn, addr *net.UDPAddr, sesschan chan protocol.P
 				fmt.Println("ERROR: Write failed")
 				//close session?
 			}
-			resetTimer <- true;
 			sessTimer.Reset(5 * time.Second)
 		default:
 			//Include default case so that we are non-blocking and can check up on the timer
